@@ -11,8 +11,8 @@ services:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
       DVC_BUCKET: dvc-store
-      GITOPS_REPO: ${GITOPS_REPO:?set GITOPS_REPO in .env, e.g. your-user/MLOps}
-      GITOPS_PATH: gitops/serving/rollout.yaml
+      GITOPS_REPO: ${GITOPS_REPO:?set GITOPS_REPO in .env, e.g. your-user/mlops-gitops}
+      GITOPS_PATH: serving/rollout.yaml
       GITHUB_TOKEN: ${GITHUB_TOKEN}                           # from .env, never committed
     volumes:
       - ./dags:/opt/airflow/dags

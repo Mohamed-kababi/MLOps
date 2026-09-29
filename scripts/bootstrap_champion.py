@@ -23,4 +23,4 @@ client.set_registered_model_alias(NAME, "champion", mv.version)
 client.delete_registered_model_alias(NAME, "candidate")
 client.set_model_version_tag(NAME, mv.version, "promoted_by", "bootstrap")
 print(f"champion -> v{mv.version}; set MODEL_VERSION, MODEL_URI and model-version in "
-      f"gitops/serving/rollout.yaml to {mv.version} before the first Argo CD sync")
+      f"serving/rollout.yaml in the mlops-gitops repo to {mv.version} before the first Argo CD sync")

@@ -8,7 +8,7 @@ Training never deploys. It opens a pull request. A person merges it, Argo CD app
 flowchart LR
     DVC["DVC remote<br/>(MinIO)"] -- "1 data hash" --> DAG["Airflow DAG<br/>train · evaluate · gate"]
     DAG -- "2 candidate" --> REG["MLflow registry"]
-    DAG -- "3 pull request" --> GIT["gitops/ in this repo"]
+    DAG -- "3 pull request" --> GIT["mlops-gitops repo"]
     GIT -- "4 merge, sync" --> ACD["Argo CD"]
     ACD --> RO["Argo Rollouts<br/>canary 25 → 50 → 100%"]
     PROM["Prometheus<br/>errors · p95 · prediction mix"] -- analysis --> RO
@@ -31,6 +31,9 @@ Manifests always carry a version number (`models:/cancer-classifier/7`), never t
 
 ## Repository layout
 
+The system spans two repositories. This one holds code and data pointers. [`mlops-gitops`](https://github.com/Mohamed-kababi/mlops-gitops) holds only the deployment manifests Argo CD syncs. Keeping them apart means the pipeline's GitHub token can open PRs on the manifests and nothing else, and every commit in `mlops-gitops` is a deployment.
+
+
 | Folder | What it is | Runs on |
 |---|---|---|
 | [`platform/`](platform) | MLflow tracking server, Postgres backend, MinIO for artifacts and DVC data | Docker Compose |
@@ -38,8 +41,8 @@ Manifests always carry a version number (`models:/cancer-classifier/7`), never t
 | [`data-pipeline/`](data-pipeline) | DVC-tracked dataset and a `prepare → train → evaluate` pipeline with lineage tags | Your machine |
 | [`feature-store/`](feature-store) | A small Feast repo showing point-in-time training retrieval vs online serving | Your machine + Redis |
 | [`orchestration/`](orchestration) | Airflow 3 with the `ml_training` DAG: fetch by hash, train, re-score the champion, register, open a PR | Docker Compose |
-| [`gitops/`](gitops) | The model server Rollout, Service, canary analysis and the Argo CD Application | kind, via Argo CD |
-| [`cluster/`](cluster) | kind + Argo CD + Argo Rollouts + Prometheus setup, and a k6 load generator | kind |
+| [`mlops-gitops`](https://github.com/Mohamed-kababi/mlops-gitops) (separate repo) | The model server Rollout, Service and canary analysis | kind, via Argo CD |
+| [`cluster/`](cluster) | kind + Argo CD + Argo Rollouts + Prometheus setup, the Argo CD Application, and a k6 load generator | kind |
 | [`monitoring/`](monitoring) | Drift exporter that follows the champion, Prometheus alert rules, Grafana | Docker Compose |
 | [`serving/`](serving) | Standalone serving experiments: BentoML, KServe (Standard mode), k6 load tests | Your machine / kind |
 | [`autoscaling/`](autoscaling) | CPU HPA vs KEDA on in-flight requests, and queue-based scale-to-zero | kind |
@@ -80,7 +83,7 @@ dvc repro        # optional: the local prepare → train → evaluate pipeline
 
 ### 3. Airflow
 
-Create a fine-grained GitHub token scoped to this repository only, with **Contents** and **Pull requests** set to read and write.
+Create a fine-grained GitHub token scoped to the `mlops-gitops` repository only, with **Contents** and **Pull requests** set to read and write.
 
 ```bash
 cd orchestration
@@ -88,20 +91,20 @@ cp .env.example .env        # set AIRFLOW_UID=$(id -u), GITOPS_REPO and GITHUB_T
 docker compose up -d --build
 ```
 
-Open http://localhost:8080, unpause `ml_training` and trigger it. The first run registers v1 as `candidate`. `gitops/serving/rollout.yaml` already deploys v1, so no PR is opened. Crown v1 once by hand, since there is no canary to promote it yet:
+Open http://localhost:8080, unpause `ml_training` and trigger it. The first run registers v1 as `candidate`. `serving/rollout.yaml` in `mlops-gitops` already deploys v1, so no PR is opened. Crown v1 once by hand, since there is no canary to promote it yet:
 
 ```bash
 pip install mlflow-skinny==2.16.2
 python scripts/bootstrap_champion.py
 ```
 
-If the first registered version isn't 1 (for example, you registered models from `experiments/` first), set the three version fields in `gitops/serving/rollout.yaml` to the version it prints, then commit and push.
+If the first registered version isn't 1 (for example, you registered models from `experiments/` first), set the three version fields in `serving/rollout.yaml` in `mlops-gitops` to the version it prints, then commit and push.
 
 ### 4. Cluster and GitOps
 
 ```bash
 ./cluster/setup.sh
-kubectl apply -f gitops/argocd/model-serving.yaml
+kubectl apply -f cluster/argocd-application.yaml
 kubectl argo rollouts get rollout model-server --watch     # wait for 4 healthy pods
 ./cluster/loadgen/run.sh                                   # steady traffic for canary analysis
 ```

@@ -7,9 +7,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/Mohamed-kababi/MLOps
+    repoURL: https://github.com/Mohamed-kababi/mlops-gitops
     targetRevision: main
-    path: gitops/serving
+    path: serving
   destination:
     server: https://kubernetes.default.svc
     namespace: default
