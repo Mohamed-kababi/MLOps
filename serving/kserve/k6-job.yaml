@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-kserve
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:latest
+          args:
+            - run
+            - -e
+            - URL=http://cancer-classifier-predictor.default.svc.cluster.local/v2/models/cancer-classifier/infer
+            - -e
+            - PAYLOAD=/scripts/payload.json
+            - /scripts/load.js
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap: {name: k6-scripts}

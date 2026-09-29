@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-infer-code
+data:
+  app.py: |
+    import asyncio, os, random, time
+    from fastapi import FastAPI
+    from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
+
+    LATENCY = float(os.getenv("LATENCY_MS", "200")) / 1000
+    SLOTS = asyncio.Semaphore(int(os.getenv("CONCURRENCY", "4")))
+
+    REQUESTS = Counter("inference_requests", "Requests served")
+    INFLIGHT = Gauge("inference_inflight", "Requests waiting or being processed")
+    DURATION = Histogram("inference_duration_seconds", "End-to-end latency",
+                         buckets=[0.1, 0.2, 0.3, 0.5, 1, 2, 5, 10])
+
+    app = FastAPI()
+    app.mount("/metrics", make_asgi_app())
+
+    @app.get("/healthz")
+    def healthz():
+        return {"ok": True}
+
+    @app.post("/predict")
+    async def predict(body: dict):
+        INFLIGHT.inc()
+        start = time.perf_counter()
+        try:
+            async with SLOTS:                  # only CONCURRENCY requests run at once
+                await asyncio.sleep(LATENCY * random.uniform(0.9, 1.1))
+            return {"prediction": random.randint(0, 1)}
+        finally:
+            INFLIGHT.dec()
+            DURATION.observe(time.perf_counter() - start)
+            REQUESTS.inc()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-infer
+  labels: {app: fake-infer}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: fake-infer}
+  template:
+    metadata:
+      labels: {app: fake-infer}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics/
+    spec:
+      containers:
+        - name: server
+          image: python:3.12-slim
+          command: ["sh", "-c"]
+          args:
+            - >
+              pip install --no-cache-dir -q "fastapi==0.115.*" "uvicorn==0.32.*" "prometheus-client==0.21.*" &&
+              uvicorn app:app --host 0.0.0.0 --port 8000 --app-dir /code
+          env:
+            - {name: LATENCY_MS, value: "200"}
+            - {name: CONCURRENCY, value: "4"}
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 2
+          resources:
+            requests: {cpu: 500m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          volumeMounts:
+            - {name: code, mountPath: /code}
+      volumes:
+        - name: code
+          configMap: {name: fake-infer-code}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-infer
+spec:
+  selector: {app: fake-infer}
+  ports:
+    - port: 80
+      targetPort: 8000

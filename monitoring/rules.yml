@@ -1,0 +1,37 @@
+groups:
+  - name: model-monitoring
+    rules:
+      - alert: ModelInputDrift
+        expr: model_drift_share > 0.2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value | humanizePercentage }} of input features have drifted'
+          runbook: 'Check upstream data and recent pipeline changes first. Retrain only if the shift is real.'
+
+      - alert: ModelPredictionDrift
+        expr: model_prediction_drift_psi > 0.25
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Prediction distribution shifted (PSI {{ $value | printf "%.2f" }})'
+
+      # the monitor is running but stuck
+      - alert: DriftMonitorStale
+        expr: time() - model_drift_last_run_timestamp_seconds > 180
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Drift job has not completed in over 3 minutes. Drift is unmonitored.'
+
+      # the monitor is gone entirely
+      - alert: DriftMonitorDown
+        expr: up{job="drift-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Drift exporter is not being scraped. Drift is unmonitored.'

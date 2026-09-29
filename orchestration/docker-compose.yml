@@ -1,0 +1,28 @@
+services:
+  airflow:
+    build: .
+    command: standalone
+    user: "${AIRFLOW_UID:-50000}:0"
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"   # lab only: no login
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      DVC_BUCKET: dvc-store
+      GITOPS_REPO: ${GITOPS_REPO:?set GITOPS_REPO in .env, e.g. your-user/MLOps}
+      GITOPS_PATH: gitops/serving/rollout.yaml
+      GITHUB_TOKEN: ${GITHUB_TOKEN}                           # from .env, never committed
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ../data-pipeline:/opt/airflow/data-pipeline:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - mlops
+
+networks:
+  mlops:
+    external: true

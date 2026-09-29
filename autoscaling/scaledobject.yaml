@@ -1,0 +1,31 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: fake-infer
+spec:
+  scaleTargetRef:
+    name: fake-infer
+  minReplicaCount: 1                 # HTTP can't wake from zero on its own metric
+  maxReplicaCount: 5
+  pollingInterval: 15
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-server.monitoring.svc
+        query: sum(inference_inflight{app="fake-infer"})
+        threshold: "3"

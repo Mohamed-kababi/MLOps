@@ -1,0 +1,20 @@
+# Service + EndpointSlice: an in-cluster name for MLflow on the host. setup.sh fills in HOST_IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow-host
+spec:
+  ports:
+    - {name: http, port: 5000, targetPort: 5000}
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: mlflow-host-1
+  labels:
+    kubernetes.io/service-name: mlflow-host
+addressType: IPv4
+ports:
+  - {name: http, port: 5000}
+endpoints:
+  - addresses: ["HOST_IP"]

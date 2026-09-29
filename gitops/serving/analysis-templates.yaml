@@ -1,0 +1,94 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: model-canary
+spec:
+  args:
+    - name: canary-hash
+    - name: stable-hash
+  metrics:
+    - name: error-rate
+      interval: 30s
+      count: 3
+      failureLimit: 1
+      successCondition: result[0] < 0.01
+      provider:
+        prometheus:
+          address: http://prometheus-server.monitoring.svc
+          query: |
+            sum(rate(inference_requests_total{status="error", rollouts_pod_template_hash="{{args.canary-hash}}"}[1m]))
+            /
+            sum(rate(inference_requests_total{rollouts_pod_template_hash="{{args.canary-hash}}"}[1m]))
+    - name: p95-latency
+      interval: 30s
+      count: 3
+      failureLimit: 1
+      successCondition: result[0] < 0.25
+      provider:
+        prometheus:
+          address: http://prometheus-server.monitoring.svc
+          query: |
+            histogram_quantile(0.95, sum by (le) (rate(
+              inference_duration_seconds_bucket{rollouts_pod_template_hash="{{args.canary-hash}}"}[1m])))
+    - name: prediction-mix
+      interval: 30s
+      count: 3
+      failureLimit: 1
+      successCondition: result[0] < 0.15
+      provider:
+        prometheus:
+          address: http://prometheus-server.monitoring.svc
+          query: |
+            abs(
+              sum(rate(inference_positive_total{rollouts_pod_template_hash="{{args.canary-hash}}"}[2m]))
+              / sum(rate(inference_requests_total{status="ok", rollouts_pod_template_hash="{{args.canary-hash}}"}[2m]))
+              -
+              sum(rate(inference_positive_total{rollouts_pod_template_hash="{{args.stable-hash}}"}[2m]))
+              / sum(rate(inference_requests_total{status="ok", rollouts_pod_template_hash="{{args.stable-hash}}"}[2m]))
+            )
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: promote-in-registry
+spec:
+  args:
+    - name: model-version
+  metrics:
+    - name: set-champion
+      provider:
+        job:
+          spec:
+            backoffLimit: 2
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: promote
+                    image: python:3.12-slim
+                    env:
+                      - {name: MLFLOW_TRACKING_URI, value: "http://mlflow-host:5000"}
+                      - {name: VERSION, value: "{{args.model-version}}"}
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        pip install --no-cache-dir -q "mlflow-skinny==2.16.2" && python - <<'EOF'
+                        import os
+                        from mlflow import MlflowClient
+                        from mlflow.exceptions import MlflowException
+                        c, name, v = MlflowClient(), "cancer-classifier", os.environ["VERSION"]
+                        try:
+                            current = c.get_model_version_by_alias(name, "champion").version
+                            if current != v:
+                                c.set_registered_model_alias(name, "previous", current)
+                        except MlflowException:
+                            pass
+                        c.set_registered_model_alias(name, "champion", v)
+                        c.set_model_version_tag(name, v, "promoted_by", "argo-rollouts")
+                        try:
+                            if c.get_model_version_by_alias(name, "candidate").version == v:
+                                c.delete_registered_model_alias(name, "candidate")
+                        except MlflowException:
+                            pass
+                        print(f"champion -> v{v}")
+                        EOF

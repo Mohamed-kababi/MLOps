@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-server-code
+data:
+  app.py: |
+    import os, time
+    import mlflow.pyfunc
+    import numpy as np
+    import pandas as pd
+    from fastapi import FastAPI, HTTPException
+    from prometheus_client import Counter, Histogram, make_asgi_app
+
+    MODEL_URI = os.environ["MODEL_URI"]              # models:/cancer-classifier/<version>
+    MODEL_VERSION = os.environ["MODEL_VERSION"]
+    model = mlflow.pyfunc.load_model(MODEL_URI)       # through MLflow's artifact proxy
+    columns = model.metadata.get_input_schema().input_names()
+
+    REQUESTS = Counter("inference_requests", "Requests", ["status"])
+    POSITIVE = Counter("inference_positive", "Positive predictions")
+    DURATION = Histogram("inference_duration_seconds", "Latency",
+                         buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1])
+    for s in ("ok", "error"):
+        REQUESTS.labels(status=s)                     # export zeros so ratios never go empty
+
+    app = FastAPI()
+    app.mount("/metrics", make_asgi_app())
+
+    @app.get("/healthz")
+    def healthz():
+        return {"model_version": MODEL_VERSION}
+
+    @app.post("/predict")
+    def predict(body: dict):
+        start = time.perf_counter()
+        try:
+            preds = np.asarray(model.predict(pd.DataFrame(body["rows"], columns=columns))).tolist()
+            REQUESTS.labels(status="ok").inc()
+            POSITIVE.inc(sum(1 for p in preds if p == 1))
+            return {"model_version": MODEL_VERSION, "predictions": preds}
+        except Exception as e:
+            REQUESTS.labels(status="error").inc()
+            raise HTTPException(status_code=400, detail=str(e))
+        finally:
+            DURATION.observe(time.perf_counter() - start)

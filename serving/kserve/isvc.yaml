@@ -1,0 +1,19 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: cancer-classifier
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+spec:
+  predictor:
+    serviceAccountName: kserve-s3
+    minReplicas: 1
+    maxReplicas: 2
+    model:
+      modelFormat:
+        name: mlflow
+      protocolVersion: v2
+      storageUri: s3://models/cancer-classifier/v1
+      resources:
+        requests: {cpu: 250m, memory: 512Mi}
+        limits: {cpu: "1", memory: 1Gi}
